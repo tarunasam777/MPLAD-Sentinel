@@ -1,0 +1,33 @@
+{
+  "stall": {
+    "model": "LogisticRegression",
+    "version": "stall-lr-v1",
+    "n_train": 1600,
+    "n_test": 400,
+    "accuracy": 0.8725,
+    "roc_auc": 0.8669,
+    "features": [
+      "months_since_sanction",
+      "extensions",
+      "disbursal_velocity",
+      "completion_pct",
+      "category_code",
+      "district_stall_rate"
+    ]
+  },
+  "cost": {
+    "model": "GradientBoostingRegressor",
+    "version": "cost-gbr-v1",
+    "n_train": 3360,
+    "n_test": 840,
+    "mae_lakh": 4.11,
+    "r2_log": 0.3391,
+    "features": [
+      "district_code",
+      "category_code",
+      "terrain_code",
+      "year"
+    ],
+    "target": "log(sanctioned_lakh)"
+  }
+}

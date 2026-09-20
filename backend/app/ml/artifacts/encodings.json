@@ -1,0 +1,20 @@
+{
+  "stall_features": [
+    "months_since_sanction",
+    "extensions",
+    "disbursal_velocity",
+    "completion_pct",
+    "category_code",
+    "district_stall_rate"
+  ],
+  "cost_features": [
+    "district_code",
+    "category_code",
+    "terrain_code",
+    "year"
+  ],
+  "versions": {
+    "stall": "stall-lr-v1",
+    "cost": "cost-gbr-v1"
+  }
+}

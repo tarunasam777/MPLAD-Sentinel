@@ -1,0 +1,204 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-50: #f1f5f9;
+  --color-navy-100: #e2e8f0;
+  --color-navy-200: #cbd5e1;
+  --color-navy-300: #94a3b8;
+  --color-navy-400: #64748b;
+  --color-navy-500: #3b5f8f;
+  --color-navy-600: #274b77;
+  --color-navy-700: #1c3d63;
+  --color-navy-800: #143354;
+  --color-navy-900: #102a47;
+  --color-navy-950: #0f172a;
+  --color-gov: #002147;
+  --color-gov-deep: #001a38;
+  --color-gov-line: #1b5b88;
+  --color-saffron: #ff9933;
+  --color-gov-gold: #d97706;
+  --color-paper: #f8fafc;
+  --color-gold: #b45309;
+  --color-gate: #b42318;
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@keyframes scanline {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 6px;
+  }
+}
+
+.gov-barcode {
+  background-image: repeating-linear-gradient(
+    90deg,
+    currentColor 0 1px,
+    transparent 1px 2px,
+    currentColor 2px 3px,
+    transparent 3px 5px,
+    currentColor 5px 6px,
+    transparent 6px 8px
+  );
+  animation: scanline 0.8s steps(4) infinite;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-navy-950);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.01em;
+}
+
+@keyframes gate-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(180, 35, 24, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(180, 35, 24, 0);
+  }
+}
+
+.gate-pulse {
+  animation: gate-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes check-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(1px) scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.check-drop {
+  animation: check-drop 0.45s ease-out both;
+}
+
+@keyframes toast-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.toast-in {
+  animation: toast-in 0.25s ease-out both;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #c7d3e4;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* ------------------------------------------------------------------ */
+/* Print / PDF export — official audit certificate                    */
+/* ------------------------------------------------------------------ */
+@media print {
+  @page {
+    size: A4;
+    margin: 11mm 12mm;
+  }
+
+  html {
+    font-size: 100% !important;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  /* Isolate the certificate: hide the entire app chrome, then reveal
+     only #print-doc (visibility hides layout, unlike display:none). */
+  body:has(#print-doc) {
+    visibility: hidden;
+  }
+
+  #print-doc {
+    display: block !important;
+    visibility: visible;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: #fff;
+  }
+
+  #print-doc,
+  #print-doc * {
+    visibility: visible;
+  }
+
+  #print-doc * {
+    break-inside: avoid;
+  }
+
+  #print-doc table,
+  #print-doc tr,
+  #print-doc td,
+  #print-doc th {
+    break-inside: auto;
+  }
+}
+/* Glassmorphism surface for hero search and overlays */
+.glass {
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+/* Hero photograph backdrop with graceful gradient fallback */
+.hero-photo {
+  background-image:
+    linear-gradient(115deg, rgba(0, 26, 56, 0.92) 0%, rgba(0, 33, 71, 0.78) 45%, rgba(15, 23, 42, 0.55) 100%),
+    url("https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?q=80&w=2072&auto=format&fit=crop"),
+    linear-gradient(140deg, #002147 0%, #0f172a 60%, #1c3d63 100%);
+  background-size: cover;
+  background-position: center;
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-gov-gold, #d2a24c);
+  outline-offset: 2px;
+}
+
+:where(#main-content) {
+  scroll-margin-top: 120px;
+}
