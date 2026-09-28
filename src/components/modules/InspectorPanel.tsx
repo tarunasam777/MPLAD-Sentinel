@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import type { WorkCase } from "@/lib/types";
 import { inr, scoreBand } from "@/lib/format";
-import { Card, Pill } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { GateBadge, ScoreChip } from "@/components/dashboard/risk";
 import { StatusPill } from "@/components/dashboard/stepper";
 
@@ -67,18 +67,30 @@ export function InspectorPanel({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden rounded-xl">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 border-b border-navy-100 bg-navy-50/70 px-4 py-3 text-left"
-      >
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-navy-700">
-          Inspector — {kase.id}
-        </span>
-        <span className="text-xs font-bold text-navy-500" aria-hidden>
-          {open ? "▾" : "▸"}
-        </span>
-      </button>
+      <div className="flex w-full items-center justify-between gap-2 border-b border-navy-100 bg-navy-50/70 px-2 pl-4">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex flex-1 items-center gap-2 py-3 text-left"
+        >
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-navy-700">
+            Inspector — {kase.id}
+          </span>
+          <span className="text-xs font-bold text-navy-500" aria-hidden>
+            {open ? "▾" : "▸"}
+          </span>
+        </button>
+        {onClose && (
+          <button
+            onClick={onClose}
+            aria-label={`Close inspector for ${kase.id}`}
+            title="Close inspector"
+            className="rounded px-2 py-1 text-xs font-bold text-slate-400 transition hover:bg-navy-100 hover:text-navy-800"
+          >
+            ✕
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">

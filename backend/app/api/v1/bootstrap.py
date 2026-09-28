@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Response
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.db import get_db
 from app.db.models import (
@@ -10,18 +10,35 @@ from app.db.models import (
     DistrictQuarterly,
     LedgerEntry,
     MonthlyTrend,
+    MpAllocation,
     MpStat,
     OfficialStat,
     StateStat,
 )
-from app.api.serializers import serialize_case, serialize_ledger, serialize_official
+from app.api.serializers import (
+    _normalize_breakdown,
+    serialize_case,
+    serialize_ledger,
+    serialize_official,
+)
 
 router = APIRouter(tags=["bootstrap"])
 
 
 @router.get("/bootstrap")
-def bootstrap(db: Session = Depends(get_db)):
-    cases = db.query(Case).order_by(Case.id.asc()).all()
+def bootstrap(db: Session = Depends(get_db), response: Response = None):
+    # Performance contract: bootstrap serves the interactive demo desks only.
+    # The 80k+ real eSAKSHI register rows (id LIKE 'WS/%') are excluded here —
+    # they are served paginated by /works and aggregated by /works/summary.
+    # Serializing them made the payload ~100 MB and froze the browser; every
+    # frontend action also refetches bootstrap, so the cost hit on every click.
+    cases = (
+        db.query(Case)
+        .filter(~Case.id.like("WS/%"))
+        .options(selectinload(Case.module_scores))
+        .order_by(Case.id.asc())
+        .all()
+    )
     ledger = db.query(LedgerEntry).order_by(LedgerEntry.index.asc()).all()
     officials = db.query(OfficialStat).order_by(OfficialStat.high_risk_decisions.desc()).all()
 
@@ -30,14 +47,23 @@ def bootstrap(db: Session = Depends(get_db)):
     states = db.query(StateStat).all()
     categories = db.query(CategoryStat).all()
     mp_stats = db.query(MpStat).all()
+    mp_allocations = db.query(MpAllocation).order_by(MpAllocation.mp_name.asc()).all()
 
-    pivot: list[dict] = []
+    # Linear pivot: one pass keyed by month instead of a nested scan over
+    # every bucket per row (was O(months x districts) per request).
+    buckets: dict[str, dict] = {}
     for row in trend_rows:
-        bucket = next((b for b in pivot if b["month"] == row.month), None)
+        bucket = buckets.get(row.month)
         if bucket is None:
             bucket = {"month": row.month}
-            pivot.append(bucket)
+            buckets[row.month] = bucket
         bucket[row.district] = row.release_pct
+    pivot = list(buckets.values())
+
+    # Bootstrap follows every user interaction, so stale intermediaries must
+    # never serve it; the idempotent seed analytics make the payload safe to
+    # refetch, but correctness wins over caching for this mutable surface.
+    response.headers["Cache-Control"] = "no-store"
 
     return {
         "cases": [serialize_case(c) for c in cases],
@@ -62,9 +88,23 @@ def bootstrap(db: Session = Depends(get_db)):
                     "mpName": m.mp_name,
                     "annualCr": 5,
                     "usedCr": m.used_cr,
-                    "breakdown": m.breakdown or [],
+                    "breakdown": _normalize_breakdown(m.breakdown),
                 }
                 for m in mp_stats
             ],
+            "mpAllocations": {
+                "source": "Official MoSPI allocation table — “Allocated Limit for Hon'ble MPs”",
+                "mpCount": len(mp_allocations),
+                "totalCr": round(sum(a.allocated_cr or 0.0 for a in mp_allocations), 2),
+                "mps": [
+                    {
+                        "mpName": a.mp_name,
+                        "state": a.state,
+                        "constituency": a.constituency,
+                        "allocatedCr": a.allocated_cr,
+                    }
+                    for a in mp_allocations
+                ],
+            },
         },
     }

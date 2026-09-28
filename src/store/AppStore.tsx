@@ -12,17 +12,21 @@ import {
 } from "react";
 import { analyticsMock, baseOfficials, buildLedger, CASES, STATE_NAME } from "@/lib/data";
 import { ledgerHash } from "@/lib/hash";
+import { encodeBody, splitBody } from "@/lib/ledger-edits";
 import { inr } from "@/lib/format";
 import {
   fetchBootstrap,
   fetchCases,
+  fetchMlMetrics,
   patchCaseTitle,
   postDecide,
   postIngestSync,
   postResetDemo,
   postTamper,
+  postTamperFields,
   postUntamper,
   verifyChainLive,
+  type MlMetrics,
 } from "@/lib/api";
 import {
   DUPLICATE_DIST_THRESHOLD_M,
@@ -78,11 +82,17 @@ export interface AppState {
   milestones: MilestoneRequest[];
   tamperIndex: number | null;
   tamperOriginal: Record<number, string>;
+  /** Blocks hand-edited via the inline amount/status editor (the manual
+   *  tamper path). Badged with the same DB-TAMPERED treatment as the
+   *  simulate button's victims. Re-derived on every live hydrate by
+   *  scanning for the encoded field tail (see lib/ledger-edits.ts). */
+  editedBlocks: number[];
   verifying: boolean;
   verifyRunId: number;
   scoresSynced: boolean;
   scoresSyncedAt: string | null;
   lastAction: string | null;
+  mlMetrics: MlMetrics | null;
 }
 
 export interface AppApi {
@@ -93,6 +103,7 @@ export interface AppApi {
     note: string
   ) => void;
   tamperLedgerAt: (index: number, newBody: string) => void;
+  editLedgerFields: (index: number, amount: number, status: string) => void;
   simulateDbTamper: () => void;
   undoTamper: () => void;
   restoreLedger: () => void;
@@ -118,30 +129,50 @@ const initialState = (): AppState => ({
   milestones: [],
   tamperIndex: null,
   tamperOriginal: {},
+  editedBlocks: [],
   verifying: false,
   verifyRunId: 0,
   scoresSynced: false,
   scoresSyncedAt: null,
   lastAction: null,
+  mlMetrics: null,
 });
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(initialState);
   const modeRef = useRef<Mode>("mock");
+  // Latest-state ref so callbacks (e.g. syncScores) can read current cases
+  // without re-creating on every state change (which would stale-memoize).
+  const stateRef = useRef(state);
 
   useEffect(() => {
     modeRef.current = state.mode;
-  }, [state.mode]);
+    stateRef.current = state;
+  }, [state]);
 
   const applyBootstrap = useCallback((data: BootstrapData) => {
-    setState((s) => ({
-      ...s,
-      mode: "live",
-      cases: data.cases,
-      ledger: data.ledger,
-      officials: data.officials,
-      analytics: data.analytics,
-    }));
+    setState((s) => {
+      // Re-detect manually edited blocks after every refetch: a stored body
+      // carrying the encoded amount/status tail (and not tracked as a mock
+      // tamper) was hand-edited in the live DB and re-sealed by the attacker.
+      const edited = data.ledger
+        .filter(
+          (e) =>
+            e.index > 0 &&
+            !(e.index in s.tamperOriginal) &&
+            splitBody(e.body).status !== null
+        )
+        .map((e) => e.index);
+      return {
+        ...s,
+        mode: "live",
+        cases: data.cases,
+        ledger: data.ledger,
+        officials: data.officials,
+        analytics: data.analytics,
+        editedBlocks: edited,
+      };
+    });
   }, []);
 
   const hydrate = useCallback(async () => {
@@ -154,9 +185,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Background hydration: the mock dataset renders immediately; live data
-    // replaces it only once the API responds.
+    // replaces it only once the API responds. Model metrics load
+    // independently — the methodology page needs them in both modes.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- setState runs after network settle, never synchronously.
     void hydrate();
+    fetchMlMetrics()
+      .then((metrics) => setState((s) => ({ ...s, mlMetrics: metrics })))
+      .catch(() => undefined);
   }, [hydrate]);
 
   const setRole = useCallback((role: Role | null) => {
@@ -336,6 +371,59 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [hydrate]
   );
 
+  /** Manual inline amount/status edit of a sealed block — the "attacker
+   *  with DB access" path. Detection-identical to simulateDbTamper: the
+   *  stored body is rewritten and ONLY that block's hash is re-signed (no
+   *  child prevHash touched), so chainValidity breaks at the child and the
+   *  ledger page shows the same banner/freeze. */
+  const editLedgerFields = useCallback(
+    (index: number, amount: number, status: string) => {
+      if (index <= 0) return;
+      const frozenMsg = `Block #${index} amount/status rewritten in the database and re-sealed — SHA-256 chain broken downstream. System frozen for audit.`;
+      if (modeRef.current === "live") {
+        setState((s) => ({ ...s, verifying: true }));
+        void postTamperFields(index, amount, status)
+          .then(() => hydrate())
+          .then(() =>
+            setState((s) => ({ ...s, verifying: false, lastAction: frozenMsg }))
+          )
+          .catch((err: Error) =>
+            setState((s) => ({
+              ...s,
+              verifying: false,
+              lastAction: `Ledger edit failed: ${err.message}`,
+            }))
+          );
+        return;
+      }
+      setState((s) => {
+        const target = s.ledger.find((e) => e.index === index);
+        if (!target) return s;
+        const original = s.tamperOriginal;
+        if (!(index in original)) original[index] = target.body;
+        const newBody = encodeBody(splitBody(target.body).head, amount, status);
+        const ledger = s.ledger.map((e) =>
+          e.index === index
+            ? {
+                ...e,
+                body: newBody,
+                hash: ledgerHash(e.prevHash, e.index, e.action, e.actor, newBody, e.timestamp),
+              }
+            : e
+        );
+        return {
+          ...s,
+          ledger,
+          tamperIndex: null,
+          tamperOriginal: original,
+          editedBlocks: s.editedBlocks.includes(index) ? s.editedBlocks : [...s.editedBlocks, index],
+          lastAction: frozenMsg,
+        };
+      });
+    },
+    [hydrate]
+  );
+
   const undoTamper = useCallback(() => {
     if (modeRef.current === "live") {
       setState((s) => ({ ...s, tamperIndex: null }));
@@ -358,7 +446,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           hash: ledgerHash(e.prevHash, e.index, e.action, e.actor, original, e.timestamp),
         };
       });
-      return { ...s, ledger, tamperOriginal: {}, tamperIndex: null };
+      return { ...s, ledger, tamperOriginal: {}, editedBlocks: [], tamperIndex: null };
     });
   }, [hydrate]);
 
@@ -602,7 +690,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Mock mode: merge the freshly evaluated records into the queue so
         // the sync is visible without leaving the demo dataset.
         try {
-          const full = await fetchCases();
+          const full = await fetchCases(res.cases);
           const byId = new Map(full.cases.map((c) => [c.id, c]));
           setState((s) => {
             const known = new Set(s.cases.map((c) => c.id));
@@ -636,7 +724,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const syncScores = useCallback(async (): Promise<number> => {
-    const data = await fetchCases();
+    // Only the demo cards in the current store need re-syncing — fetching the
+    // whole register (previously 52k serialized cases) just to refresh a
+    // couple dozen cards made the district dashboard crawl.
+    const wanted = stateRef.current.cases.slice(0, 200).map((c) => c.id);
+    if (!wanted.length) return 0;
+    const data = await fetchCases(wanted);
     const byId = new Map(data.cases.map((c) => [c.id, c]));
     let matched = 0;
     setState((s) => {
@@ -667,6 +760,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRole,
       decideCase,
       tamperLedgerAt,
+      editLedgerFields,
       simulateDbTamper,
       undoTamper,
       restoreLedger: undoTamper,
@@ -680,7 +774,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       retryLive: hydrate,
       resetDemo,
     }),
-    [setRole, decideCase, tamperLedgerAt, simulateDbTamper, undoTamper, verifyChain, submitProposal, requestDisbursement, approveMilestone, updateCaseTitle, syncIngest, syncScores, hydrate, resetDemo]
+    [setRole, decideCase, tamperLedgerAt, editLedgerFields, simulateDbTamper, undoTamper, verifyChain, submitProposal, requestDisbursement, approveMilestone, updateCaseTitle, syncIngest, syncScores, hydrate, resetDemo]
   );
 
   return <ctx.Provider value={{ state, api }}>{children}</ctx.Provider>;

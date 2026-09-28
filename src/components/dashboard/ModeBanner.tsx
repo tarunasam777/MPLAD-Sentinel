@@ -1,6 +1,7 @@
 "use client";
 
 import { useApp } from "@/store/AppStore";
+import { useLocale } from "@/lib/i18n";
 
 /**
  * Explicit data-source toggle banner: Demo Mode (mock dataset) vs Live
@@ -9,6 +10,7 @@ import { useApp } from "@/store/AppStore";
  */
 export function ModeBanner() {
   const { state, api } = useApp();
+  const { t } = useLocale();
   const live = state.mode === "live";
 
   return (
@@ -28,22 +30,18 @@ export function ModeBanner() {
       />
       {live ? (
         <>
-          <span className="font-bold uppercase tracking-wider">Live Pipeline Feed</span>
-          <span className="text-teal-800/80">
-            Serving evaluated cases from the FastAPI detection → gate → ledger pipeline.
-          </span>
+          <span className="font-bold uppercase tracking-wider">{t("mode.live")}</span>
+          <span className="text-teal-800/80">{t("mode.liveDetail")}</span>
         </>
       ) : (
         <>
-          <span className="font-bold uppercase tracking-wider">Demo Mode (Mock Data)</span>
-          <span className="text-amber-800/80">
-            Showing the built-in synthetic dataset — every figure is illustrative.
-          </span>
+          <span className="font-bold uppercase tracking-wider">{t("mode.demo")}</span>
+          <span className="text-amber-800/80">{t("mode.demoDetail")}</span>
           <button
             onClick={() => api.retryLive()}
             className="ml-auto rounded-lg border border-amber-400 bg-white px-3 py-1 text-[11px] font-bold text-amber-900 transition hover:bg-amber-100"
           >
-            ⟳ Connect live backend
+            {t("mode.retry")}
           </button>
         </>
       )}

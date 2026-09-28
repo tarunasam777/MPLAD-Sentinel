@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy import func
+
 from app.core import config
 from app.db.models import Case
 from app.ml.models import MODEL_VERSIONS, stall_proba
@@ -11,15 +13,25 @@ PRIOR_DISTRICT_STALL_RATE = 0.15
 def district_stall_rate(db, district: str | None) -> float:
     """Live district stall rate: share of the district's cases currently in
     a held/escalated state. Computed from the case table at evaluation
-    time — a genuine input feature, not a stored constant."""
+    time — a genuine input feature, not a stored constant.
+
+    SQL-side counting (not row loading): the register now carries tens of
+    thousands of real works, and this runs once per evaluation."""
     try:
-        rows = db.query(Case).filter_by(district=district).all()
+        total = (
+            db.query(func.count(Case.id)).filter(Case.district == district).scalar() or 0
+        )
+        if not total:
+            return PRIOR_DISTRICT_STALL_RATE
+        bad = (
+            db.query(func.count(Case.id))
+            .filter(Case.district == district, Case.status.in_(("hold_active", "escalated")))
+            .scalar()
+            or 0
+        )
     except Exception:
         return PRIOR_DISTRICT_STALL_RATE
-    if not rows:
-        return PRIOR_DISTRICT_STALL_RATE
-    bad = sum(1 for c in rows if (c.status or "") in {"hold_active", "escalated"})
-    return round(bad / len(rows), 3)
+    return round(bad / total, 3)
 
 
 def evaluate(ctx: ModuleContext) -> ModuleResult:
@@ -31,12 +43,12 @@ def evaluate(ctx: ModuleContext) -> ModuleResult:
     pay = ctx.facts_for("payment")
     months = float(pay.get("months_since_sanction", 0) or 0)
     extensions = float(pay.get("extensions", facts.get("extensions", 0)) or 0)
-    released = float(pay.get("released_pct", 0) or 0)
     completion = float(pay.get("completion_pct", 0) or 0)
-    velocity = round(released / max(1.0, months), 2)
     rate = district_stall_rate(ctx.db, ctx.case.district)
 
-    proba = stall_proba(months, extensions, velocity, completion, ctx.case.category, rate)
+    # disbursal velocity is deliberately NOT a model input (label-leakage
+    # guard); it stays in the payment module's own deterministic rule.
+    proba = stall_proba(months, extensions, completion, ctx.case.category, rate)
     stall = int(round(proba * 100))
 
     score = clamp(10 + 0.95 * stall)
@@ -49,7 +61,6 @@ def evaluate(ctx: ModuleContext) -> ModuleResult:
         "factors": factors,
         "model": MODEL_VERSIONS["stall"],
         "districtStallRate": rate,
-        "disbursalVelocity": velocity,
         "completionPct": completion,
         "extensions": int(extensions),
     }

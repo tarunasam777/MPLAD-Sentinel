@@ -5,6 +5,21 @@ from sqlalchemy.orm import Session
 from app.db.models import Case, LedgerEntry, OfficialStat
 
 
+def _normalize_breakdown(value: object) -> list[dict]:
+    """MpStat.breakdown arrives in two shapes across seed data: a legacy dict
+    of {category: lakh} or the contracted [{category, lakh}, ...] array.
+    Always emit the array shape the frontend expects — the dict form made
+    ``breakdown.map`` throw a runtime TypeError on the MP dashboard."""
+    if isinstance(value, dict):
+        return [
+            {"category": str(cat), "lakh": float(lakh)}
+            for cat, lakh in value.items()
+        ]
+    if isinstance(value, list):
+        return [b for b in value if isinstance(b, dict) and "category" in b and "lakh" in b]
+    return []
+
+
 def serialize_case(case: Case) -> dict:
     modules = sorted(
         case.module_scores,

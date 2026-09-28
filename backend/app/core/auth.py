@@ -15,6 +15,7 @@ Accepted credentials (either one):
 from __future__ import annotations
 
 import os
+import secrets
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -31,7 +32,7 @@ def get_current_actor(
     """Gate for decision/override/mutation endpoints. Returns the demo
     actor descriptor on success, 401 otherwise."""
     presented = (credentials.credentials if credentials else None) or x_demo_token
-    if not presented or presented != DEMO_AUTH_TOKEN:
+    if not presented or not secrets.compare_digest(presented, DEMO_AUTH_TOKEN):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=(

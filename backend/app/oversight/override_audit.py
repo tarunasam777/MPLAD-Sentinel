@@ -36,7 +36,6 @@ def official_audit_rows(db: Session) -> list[dict]:
                 "gateOverrides": o.gate_overrides,
                 "thresholdOverrides": o.threshold_overrides,
                 "flaggedNote": "; ".join(note) if note else None,
-                "_rate": round(rate, 2),
             }
         )
     return rows
@@ -47,12 +46,19 @@ def override_records(db: Session) -> list[dict]:
     from app.db.models import Case
 
     records = db.query(OverrideRecord).order_by(OverrideRecord.timestamp.desc()).all()
-    by_id = {c.id: c for c in db.query(Case).all()}
+    # Only load titles for the case ids actually present in the audit trail —
+    # the old ``db.query(Case).all()`` materialized every real register row
+    # (77k+ ORM instances) just to title a handful of demo overrides.
+    wanted_ids = [r.case_id for r in records if r.case_id]
+    by_id = {}
+    if wanted_ids:
+        for c in db.query(Case.id, Case.title).filter(Case.id.in_(wanted_ids)).all():
+            by_id[c.id] = c.title
     return [
         {
             "id": r.id,
             "caseId": r.case_id,
-            "caseTitle": by_id[r.case_id].title if r.case_id in by_id else r.case_id,
+            "caseTitle": by_id.get(r.case_id, r.case_id),
             "kind": r.kind,
             "officialName": r.official_name,
             "officialDistrict": r.official_district,

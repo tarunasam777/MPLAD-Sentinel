@@ -16,6 +16,12 @@ TRANSITIONS = {
     "evaluating": {"inspect", "escalate"},
     "released": set(),
     "escalated": set(),
+    # Terminal/entry states outside the decision loop: no transitions, but
+    # a decision must answer 409 cleanly, not crash with KeyError (bug:
+    # 'submitted'/'auto_cleared'/'rejected' rows 500'd the decide endpoint).
+    "submitted": set(),
+    "auto_cleared": set(),
+    "rejected": set(),
 }
 
 DECISION_LABELS = {
@@ -39,11 +45,35 @@ def decide(db: Session, case_id: str, decision: str, note: str) -> Case:
     if case is None:
         raise KeyError(f"Case '{case_id}' not found")
 
-    if decision not in TRANSITIONS[case.status]:
+    if decision not in TRANSITIONS.get(case.status, set()):
         raise ValueError(f"Decision '{decision}' not allowed from status '{case.status}'")
 
     is_gate = bool(case.gate_fired)
     is_module_alert = fusion.module_level_hold_triggered(case.module_scores)
+
+    # Data policy enforcement: a held/escalated case must never carry a real,
+    # named MP or DM. Demonstration records are tagged ``facts["demo"]`` at
+    # ingestion/seed time, and held rows get a fictional official of record.
+    # Real portal records (``record_kind: "real"``, untagged) sit outside the
+    # demo workflow entirely — no hold, override, or escalation may be
+    # recorded against them; decisions on real rows belong to the real
+    # oversight process.
+    facts = case.facts if isinstance(case.facts, dict) else {}
+    if facts.get("record_kind") == "real":
+        raise ValueError(
+            "Data policy: real portal records are read-only in the demo "
+            "workflow — holds, overrides, and escalations apply to "
+            "demonstration records only."
+        )
+    # Single policy rule (was: only hold_active releases were guarded, so an
+    # untagged legacy row could be escalated/approved from 'evaluating'):
+    # every decision is a demo-workflow action and requires a demo-tagged
+    # record. Real rows are already rejected above.
+    if not facts.get("demo"):
+        raise ValueError(
+            "Data policy: workflow decisions are only permitted for "
+            "demonstration records with fictional officials of record."
+        )
 
     if decision == "approve":
         case.status = "released"
@@ -61,18 +91,28 @@ def decide(db: Session, case_id: str, decision: str, note: str) -> Case:
         action_label = "ESCALATED TO AUDIT"
         entry_category = "escalate"
 
+    # Path values must be CaseState labels ('hold_active', not 'hold' — the
+    # old string violated the frontend's CaseState[] contract) and must not
+    # duplicate on repeated inspect calls.
     path = list(case.path or [])
-    if decision == "approve":
-        path.append("override_approved")
-    elif decision == "inspect":
-        path.append("hold")
-    else:
-        path.append("escalate")
+    next_state = {
+        "approve": "override_approved",
+        "inspect": "hold_active",
+        "escalate": "escalated",
+    }[decision]
+    if next_state not in path:
+        path.append(next_state)
     case.path = path
     case.status_since = datetime.now(timezone.utc).strftime("%d %b %Y")
 
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     body = f"{decision}: {note}".strip() if note else decision
+    if is_module_alert:
+        # Persistent, human-readable metadata: a decision recorded against a
+        # case with a single module at >= 75 severity is signed into the
+        # ledger body so the override audit can see the alert context that
+        # triggered the human review (previously computed and dropped).
+        body = f"{body} · module-level alert: single-module severity ≥ 75"
     dm_actor = _dm_actor_id(case.dm_name)
     dm_role = f"District Magistrate \u00b7 {case.district}"
     entry = append(

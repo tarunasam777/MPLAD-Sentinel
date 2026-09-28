@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Shell } from "@/components/shell";
 import { useApp } from "@/store/AppStore";
 import { mps } from "@/lib/data";
+import { findOfficialAllocation } from "@/lib/mp-allocations";
+import { AllocationTable } from "@/components/dashboard/AllocationTable";
 import type { Proposal, WorkCase } from "@/lib/types";
 import { Card, HelpNote, Pill, ProgressBar, SectionTitle, SelectInput } from "@/components/ui";
 import { StatusPill } from "@/components/dashboard/stepper";
@@ -24,9 +27,33 @@ function plainTone(c: WorkCase): { label: string; cls: string } {
 }
 
 export default function MPDashboardPage() {
+  return (
+    <Suspense fallback={<Shell active="home"><div className="py-16 text-center text-sm text-slate-500">Loading desk…</div></Shell>}>
+      <MPDashboardInner />
+    </Suspense>
+  );
+}
+
+function MPDashboardInner() {
   const { state } = useApp();
-  const [selectedMp, setSelectedMp] = useState(mps[6]);
+  const params = useSearchParams();
+  /** Deep link support: /dashboard/mp?mp=<name> (universal search routes
+   *  here). Falls back to the first MP in the demo roster. */
+  const mpParam = params.get("mp");
+  const [selectedMp, setSelectedMp] = useState(
+    () => (mpParam && mps.includes(mpParam) ? mpParam : mps[6])
+  );
   const [showForm, setShowForm] = useState(false);
+
+  // React to deep-link param changes (e.g. another search from the dashboard)
+  // via React's documented "adjust state during render" pattern — guarded,
+  // so it settles in one extra render and never cascades like a synchronous
+  // setState inside an effect would.
+  const [lastMpParam, setLastMpParam] = useState(mpParam);
+  if (mpParam !== lastMpParam) {
+    setLastMpParam(mpParam);
+    if (mpParam && mps.includes(mpParam)) setSelectedMp(mpParam);
+  }
 
   const myWorks = useMemo(
     () => state.cases.filter((c) => c.mpName === selectedMp),
@@ -37,11 +64,15 @@ export default function MPDashboardPage() {
     [state.proposals, selectedMp]
   );
   const entRecord = state.analytics.entitlements.find((e) => e.mpName === selectedMp);
+  const officialRow = findOfficialAllocation(selectedMp);
+  // Backend normalizes breakdown to [{category, lakh}], but a null/odd row
+  // must never crash the dashboard with ".map is not a function".
+  const breakdown = Array.isArray(entRecord?.breakdown) ? entRecord.breakdown : [];
   const ent = {
     usedCr: entRecord?.usedCr ?? 0,
-    category: (entRecord?.breakdown ?? []).map((b) => ({
+    category: breakdown.map((b) => ({
       label: b.category,
-      pct: Math.round((b.lakh / Math.max(1, entRecord?.breakdown.reduce((a, c) => a + c.lakh, 0) || 1)) * 100),
+      pct: Math.round((b.lakh / Math.max(1, breakdown.reduce((a, c) => a + c.lakh, 0) || 1)) * 100),
     })),
   };
   const sanctioned = myWorks.reduce((a, c) => a + c.sanctionedAmountLakh, 0);
@@ -150,6 +181,33 @@ export default function MPDashboardPage() {
         </div>
       </Card>
 
+      {/* Official MoSPI allocation — real published figure for this MP */}
+      {officialRow && (
+        <Card className="mt-8 rounded-xl border-l-4 border-l-gov-gold p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-gov-gold">
+                Official allocation limit · MoSPI published table
+              </div>
+              <h3 className="mt-1 text-sm font-extrabold text-navy-950">
+                {officialRow.mpName} · {officialRow.constituency}
+              </h3>
+              <p className="mt-1 text-xs text-slate-600">
+                {officialRow.state} — from the official “Allocated Limit for Hon&apos;ble MPs” table
+                (all {state.analytics.mpAllocations.mpCount} Lok Sabha MPs, ₹
+                {state.analytics.mpAllocations.totalCr.toLocaleString("en-IN", { maximumFractionDigits: 0 })} Cr total).
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-extrabold tabular-nums text-navy-950">
+                ₹{officialRow.allocatedCr?.toLocaleString("en-IN", { maximumFractionDigits: 2 }) ?? "—"} Cr
+              </div>
+              <div className="text-[11px] text-slate-500">allocated limit</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <SectionTitle
         eyebrow="Watch-list"
         title="Recommended works"
@@ -193,6 +251,20 @@ export default function MPDashboardPage() {
             </Link>
           );
         })}
+      </div>
+
+      <div className="mt-12">
+        <SectionTitle
+          eyebrow="Official data"
+          title="MP allocation register — official MoSPI table"
+          subtitle="The published allocation limit for every Lok Sabha constituency; your row is highlighted."
+        />
+        <div className="mt-4">
+          <AllocationTable
+            allocations={state.analytics.mpAllocations.mps}
+            highlightNames={officialRow ? [officialRow.mpName] : []}
+          />
+        </div>
       </div>
 
       <div className="mt-6">

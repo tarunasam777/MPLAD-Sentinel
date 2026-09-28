@@ -1,20 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/store/AppStore";
 
 /** "Sync Live eSAKSHI Feed" button with real-time status feedback.
  *  In live mode the app rehydrates from the backend after a successful
  *  sync; in mock mode the ingested records are merged into the queue and
- *  the counts are reported. Backend unreachable → honest error state. */
+ *  the counts are reported. Backend unreachable → honest error state.
+ *
+ *  The sync evaluates 29 records through the full module/ML pipeline
+ *  (seconds, not ms), so the button shows a live elapsed-seconds counter
+ *  instead of a frozen label. */
 export function IngestSyncButton({ compact = false }: { compact?: boolean }) {
   const { state, api } = useApp();
   const [status, setStatus] = useState<"idle" | "syncing" | "done" | "error">("idle");
   const [detail, setDetail] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const startedRef = useRef<number>(0);
+
+  // Live elapsed-seconds ticker while a sync is in flight.
+  useEffect(() => {
+    if (status !== "syncing") return;
+    const started = startedRef.current || Date.now();
+    const tick = () => setElapsed(Math.floor((Date.now() - started) / 1000));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [status]);
 
   const run = async () => {
     setStatus("syncing");
     setDetail(null);
+    startedRef.current = Date.now();
+    setElapsed(0);
     try {
       const res = await api.syncIngest();
       setStatus("done");
@@ -38,7 +56,7 @@ export function IngestSyncButton({ compact = false }: { compact?: boolean }) {
           compact ? "py-1.5 text-xs" : "px-4 py-2 text-sm"
         } bg-navy-900 hover:bg-navy-800`}
       >
-        {status === "syncing" ? "Syncing eSAKSHI feed…" : "⇅ Sync Live eSAKSHI Feed"}
+        {status === "syncing" ? `Evaluating… ${elapsed}s` : "⇅ Sync Live eSAKSHI Feed"}
       </button>
       {status !== "idle" && detail && (
         <span
@@ -47,7 +65,7 @@ export function IngestSyncButton({ compact = false }: { compact?: boolean }) {
             status === "done" ? "text-teal-700" : status === "error" ? "text-gate" : "text-navy-600"
           }`}
         >
-          {status === "syncing" ? "Contacting portal…" : detail}
+          {status === "syncing" ? "Running modules 1–9 on new records…" : detail}
           {state.mode === "mock" && status === "done" ? " · switch to Live mode to audit them on-chain" : ""}
         </span>
       )}

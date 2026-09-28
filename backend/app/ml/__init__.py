@@ -3,7 +3,7 @@
 Two genuinely trained models live here:
 
 * ``stall`` — LogisticRegression classifier predicting P(work stalls).
-* ``cost`` — GradientBoostingRegressor predicting log sanctioned cost.
+* ``cost`` — XGBRegressor predicting log sanctioned cost.
 
 ``models.py`` is the single source of truth for feature order and the
 categorical encodings shared by training (``train.py``) and inference

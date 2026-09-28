@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.db
+sentinel.db
+.env
+tests/
+scripts/
+htmlcov/
+.coverage

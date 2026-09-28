@@ -81,7 +81,7 @@ export function NationalHeatmap({ data }: { data: { state: string; utilization: 
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-300" /> 50–64</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-500" /> 40–49</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-600" /> &lt;40</span>
-        <span className="ml-auto">Stylised national view — utilisation % of sanctioned amount</span>
+        <span className="ml-auto">Mean release pace of evaluated works per state (official allocation table coverage)</span>
       </div>
     </div>
   );

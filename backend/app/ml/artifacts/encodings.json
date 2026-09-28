@@ -2,7 +2,6 @@
   "stall_features": [
     "months_since_sanction",
     "extensions",
-    "disbursal_velocity",
     "completion_pct",
     "category_code",
     "district_stall_rate"
@@ -14,7 +13,18 @@
     "year"
   ],
   "versions": {
-    "stall": "stall-lr-v1",
-    "cost": "cost-gbr-v1"
+    "stall": "stall-lr-v2",
+    "cost": "cost-xgb-v1"
+  },
+  "dataset_card": {
+    "source": "eSAKSHI work-level exports (portal snapshot 2026-09-21)",
+    "n_works": 81727,
+    "n_completed": 35648,
+    "stall_definition": "payment lapse: >= 6 months since sanction with zero vendor payments recorded",
+    "n_stall_positive": 9678,
+    "stall_population": "works aged >= 12 months at snapshot (label fully determined)",
+    "feature_policy": "sanction-time features only; leave-one-out district prior",
+    "terrain_note": "terrain not published by the portal; constant 'plain' for real rows",
+    "extensions_note": "derived from sanctioned-amount chunk size (min(3, lakh//40)); count not published"
   }
 }

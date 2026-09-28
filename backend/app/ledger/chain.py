@@ -62,6 +62,13 @@ def append(
     db.add(entry)
     if commit:
         db.commit()
+    else:
+        # Batch appends (ingest with record_ledger=True, several per one
+        # transaction) must see each other: the next append() reads the
+        # chain tail from the DB, so the just-added block has to be visible
+        # inside this transaction or every row would chain against the same
+        # committed tail and collide on the integer 'index' PK.
+        db.flush()
     return entry
 
 
@@ -120,4 +127,7 @@ def untamper(db: Session) -> int:
 def reset(db: Session) -> None:
     db.query(LedgerEntry).delete()
     db.query(MetaKey).filter(MetaKey.key.like("tamper_original_%")).delete()
+    # Manual field-edit snapshots (ledger_fields_edit_% ) are restored/cleared
+    # by the same tamper lifecycle — a demo reset must clear them too.
+    db.query(MetaKey).filter(MetaKey.key.like("ledger_fields_edit_%")).delete()
     db.commit()

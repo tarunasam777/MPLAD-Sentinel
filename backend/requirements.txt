@@ -13,4 +13,11 @@ numpy==2.5.3
 pandas==3.0.6
 scipy==1.18.1
 scikit-learn==1.9.1
+# Cost regressor. macOS needs the OpenMP runtime too: `brew install libomp`
+xgboost==3.0.5
 shap==0.52.0
+PyJWT==2.14.0
+passlib==1.7.4
+bcrypt==5.0.0
+GeoAlchemy2==0.20.0
+redis==8.1.0

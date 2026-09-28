@@ -5,6 +5,7 @@ import math
 from sqlalchemy.orm import Session
 
 from app.core.config import STATE_NAME
+from app.data.mp_loader import load_allocations
 from app.db import seed_data
 from app.db.models import (
     Case,
@@ -14,6 +15,7 @@ from app.db.models import (
     LedgerEntry,
     ModuleScore,
     MonthlyTrend,
+    MpAllocation,
     MpStat,
     OfficialStat,
     OverrideRecord,
@@ -33,14 +35,39 @@ CASE_FIELD_MAP = {
 }
 
 
+def _seed_mp_allocations(db: Session) -> None:
+    """Idempotently sync the MpAllocation table from the vendored CSV.
+
+    Runs on every boot (even when the demo reseed is skipped): a fast
+    count check keeps the common path instant, while a fresh/empty DB or a
+    schema change always self-heals to the full 543-row official table.
+    """
+    rows = load_allocations()[0]
+    existing = db.query(MpAllocation.mp_name).count()
+    if existing == len(rows):
+        return
+    db.query(MpAllocation).delete()
+    for row in rows:
+        db.add(
+            MpAllocation(
+                mp_name=row["mpName"],
+                state=row["state"],
+                constituency=row["constituency"],
+                allocated_cr=row["allocatedCr"],
+            )
+        )
+    db.flush()
+
+
 def reseed(db: Session, force: bool = False) -> bool:
     """Idempotent seed: clears the demo tables and re-derives all module scores,
     composites and gates from the stored facts."""
+    _seed_mp_allocations(db)
     if not force and db.query(Case).count():
         return False
 
     db.query(OverrideRecord).delete()
-    db.query(ModuleScore).delete()
+    db.query(ModuleScore).filter(~ModuleScore.case_id.like("WS/%")).delete(synchronize_session=False)
     db.query(LedgerEntry).delete()
     db.query(MpStat).delete()
     db.query(CategoryStat).delete()
@@ -49,7 +76,16 @@ def reseed(db: Session, force: bool = False) -> bool:
     db.query(DistrictQuarterly).delete()
     db.query(CostBaseline).delete()
     db.query(OfficialStat).delete()
-    db.query(Case).delete()
+    # Real eSAKSHI register rows (WS/*) are read-only reference data, not
+    # demo state — a demo reset preserves them. Demo/scale rows are cleared
+    # and re-derived from the vendored seed sets below.
+    # MpAllocation rows are synced idempotently at the top of reseed() —
+    # not cleared here — so a demo reset never blanks the official table.
+    # ModuleScores for deleted demo cases must go too: WS/* scores are kept,
+    # but the blanket keep-orphaned every MPL-* score and broke the reseed
+    # flush with a case_id FK violation (module_scores.case_id → cases.id).
+    db.query(ModuleScore).filter(ModuleScore.case_id.notlike("WS/%")).delete(synchronize_session=False)
+    db.query(Case).filter(~Case.id.like("WS/%")).delete(synchronize_session=False)
 
     for row in seed_data.COST_BASELINES:
         db.add(CostBaseline(**{**row, "mean_log_cost": math.log(row["median_lakh"])}))
@@ -66,6 +102,8 @@ def reseed(db: Session, force: bool = False) -> bool:
     for row in seed_data.OFFICIALS:
         db.add(OfficialStat(**{**row, "state": STATE_NAME}))
 
+    # (Official MoSPI allocation table is synced by _seed_mp_allocations above.)
+
     db.flush()
     for row in seed_data.CASES:
         mapped = {}
@@ -74,7 +112,7 @@ def reseed(db: Session, force: bool = False) -> bool:
                 continue
             mapped[CASE_FIELD_MAP.get(k, k)] = v
         case = Case(**mapped)
-        case.facts = row["facts"]
+        case.facts = {"demo": True, **row["facts"]}
         db.add(case)
         db.flush()
         run_case_pipeline(db, case)

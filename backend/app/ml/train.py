@@ -19,13 +19,13 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.model_selection import train_test_split
+from xgboost import XGBRegressor
 
-from app.ml.models import ARTIFACT_DIR, COST_FEATURES, STALL_FEATURES
-from app.ml.synthetic import cost_history_frame, stall_frame, trend_history_frame
+from app.ml.models import ARTIFACT_DIR, COST_FEATURES, MODEL_VERSIONS, STALL_FEATURES
+from app.ml import real_training
 
 STALL_TEST_SIZE = 0.2
 STALL_SPLIT_SEED = 7
@@ -36,15 +36,16 @@ COST_SPLIT_SEED = 7
 def train_stall(df: pd.DataFrame) -> tuple[LogisticRegression, dict]:
     X = df[STALL_FEATURES]
     y = df["stalled"].astype(int)
+    stratify = y if y.nunique() > 1 else None
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=STALL_TEST_SIZE, random_state=STALL_SPLIT_SEED, stratify=y
+        X, y, test_size=STALL_TEST_SIZE, random_state=STALL_SPLIT_SEED, stratify=stratify
     )
     model = LogisticRegression(max_iter=2000)
     model.fit(X_train, y_train)
     proba = model.predict_proba(X_test)[:, 1]
     metrics = {
         "model": "LogisticRegression",
-        "version": "stall-lr-v1",
+        "version": MODEL_VERSIONS["stall"],
         "n_train": int(len(X_train)),
         "n_test": int(len(X_test)),
         "accuracy": round(float(accuracy_score(y_test, model.predict(X_test))), 4),
@@ -54,7 +55,7 @@ def train_stall(df: pd.DataFrame) -> tuple[LogisticRegression, dict]:
     return model, metrics
 
 
-def train_cost(df: pd.DataFrame) -> tuple[GradientBoostingRegressor, dict]:
+def train_cost(df: pd.DataFrame) -> tuple[XGBRegressor, dict]:
     from app.ml.models import encode_category, encode_district, encode_terrain
 
     work = df.copy()
@@ -67,12 +68,22 @@ def train_cost(df: pd.DataFrame) -> tuple[GradientBoostingRegressor, dict]:
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=COST_TEST_SIZE, random_state=COST_SPLIT_SEED
     )
-    model = GradientBoostingRegressor(random_state=7)
+    model = XGBRegressor(
+        n_estimators=300,
+        max_depth=5,
+        learning_rate=0.05,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        reg_lambda=1.0,
+        random_state=7,
+        n_jobs=-1,
+        tree_method="hist",
+    )
     model.fit(X_train, y_train)
     pred_log = model.predict(X_test)
     metrics = {
-        "model": "GradientBoostingRegressor",
-        "version": "cost-gbr-v1",
+        "model": "XGBRegressor",
+        "version": MODEL_VERSIONS["cost"],
         "n_train": int(len(X_train)),
         "n_test": int(len(X_test)),
         "mae_lakh": round(float(mean_absolute_error(np.exp(y_test), np.exp(pred_log))), 3),
@@ -84,12 +95,32 @@ def train_cost(df: pd.DataFrame) -> tuple[GradientBoostingRegressor, dict]:
 
 
 def train_all(out_dir: Path = ARTIFACT_DIR) -> dict:
+    """Train both models on the REAL eSAKSHI work-level exports.
+
+    The frames come from ``app.ml.real_training`` (portal payment register =
+    ground truth); the synthetic generators remain only as the in-memory
+    fallback when no artifacts exist. A dataset card documenting the label
+    definition is stored beside the metrics.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
-    stall_df = stall_frame()
-    cost_df = cost_history_frame()
+    card = real_training.dataset_card()
+    stall_df = real_training.stall_frame()
+    cost_df = real_training.cost_history_frame()
 
     stall_model, stall_metrics = train_stall(stall_df)
     cost_model, cost_metrics = train_cost(cost_df)
+
+    stall_metrics["dataset"] = {
+        "source": card["source"],
+        "n_works": card["n_works"],
+        "stall_definition": card["stall_definition"],
+        "n_positive": card["n_stall_positive"],
+    }
+    cost_metrics["dataset"] = {
+        "source": card["source"],
+        "n_works": card["n_works"],
+        "terrain_note": card["terrain_note"],
+    }
 
     joblib.dump(stall_model, out_dir / "stall_model.joblib")
     joblib.dump(cost_model, out_dir / "cost_model.joblib")
@@ -100,13 +131,19 @@ def train_all(out_dir: Path = ARTIFACT_DIR) -> dict:
             {
                 "stall_features": list(STALL_FEATURES),
                 "cost_features": list(COST_FEATURES),
-                "versions": {"stall": "stall-lr-v1", "cost": "cost-gbr-v1"},
+                "versions": MODEL_VERSIONS,
+                "dataset_card": card,
             },
             indent=2,
         )
     )
     stall_df.to_csv(out_dir / "stall_training_samples.csv", index=False)
     cost_df.to_csv(out_dir / "cost_training_samples.csv", index=False)
+    # District trend history stays on the vendored longitudinal table (the
+    # exports cover 2023+; the 2015–2025 series remains the trend module's
+    # reference for demonstration districts).
+    from app.ml.synthetic import trend_history_frame
+
     trend_history_frame().to_csv(out_dir / "trend_history.csv", index=False)
     return metrics
 

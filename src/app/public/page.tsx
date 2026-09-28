@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/Header";
@@ -10,10 +10,11 @@ import { DistrictMap } from "@/components/dashboard/district-map";
 import { Card, Pill, SelectInput, SectionTitle, TextInput } from "@/components/ui";
 import { StatStrip } from "@/components/dashboard/StatStrip";
 import { ModeBanner } from "@/components/dashboard/ModeBanner";
+import { AllocationTable } from "@/components/dashboard/AllocationTable";
 import { inr, statusLabel } from "@/lib/format";
-import { districts, STATE_NAME } from "@/lib/data";
+import { districts, mps, STATE_NAME } from "@/lib/data";
 import { caseGeo } from "@/lib/geo";
-import type { CaseState, WorkCase } from "@/lib/types";
+import type { WorkCase } from "@/lib/types";
 
 const PAGE_SIZE = 8;
 
@@ -35,6 +36,15 @@ function Explorer() {
   const [q, setQ] = useState(params.get("q") ?? "");
   const [district, setDistrict] = useState("All districts");
   const [page, setPage] = useState(0);
+
+  // React to URL query changes: searching from the header or hero while
+  // already on /public previously did nothing because the query was read
+  // only on first mount. Syncing from the URL keeps the two in lockstep.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- controlled-input sync from an external source (the URL); same precedent as AppStore hydration.
+    setQ(params.get("q") ?? "");
+    setPage(0);
+  }, [params]);
 
   const selected = selectedId ? state.cases.find((c) => c.id === selectedId) ?? null : null;
 
@@ -61,10 +71,9 @@ function Explorer() {
   const pageRows = rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
 
   const totalSanctioned = state.cases.reduce((a, c) => a + c.sanctionedAmountLakh, 0);
-  const activeWorks = state.cases.filter(
-    (c) => c.status !== "rejected" && c.status !== "released"
-  ).length;
   const openGates = state.cases.filter((c) => c.gate.fired).length;
+  const allocations = state.analytics.mpAllocations;
+  const totalAllocCr = allocations.totalCr.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 
   const validity = chainValidity(state.ledger);
   const brokenAt = validity.findIndex((v) => !v);
@@ -88,7 +97,7 @@ function Explorer() {
       <StatStrip
         items={[
           { label: "Works sanctioned", value: state.cases.length, detail: `${districts.length - 1} districts · ${inr(totalSanctioned)}`, icon: <span aria-hidden>🏗️</span> },
-          { label: "Active works monitored", value: activeWorks, detail: "in execution or review", accent: "text-teal-700" },
+          { label: "Official allocations tracked", value: allocations.mpCount, detail: `₹${totalAllocCr} Cr · all Lok Sabha MPs`, accent: "text-teal-700" },
           { label: "Gate holds under audit", value: openGates, detail: "blocked from release", accent: "text-gate" },
           { label: "Ledger integrity", value: brokenAt === -1 ? "Verified ✓" : `Broken @ #${brokenAt}`, detail: "SHA-256 chain", accent: brokenAt === -1 ? "text-teal-700" : "text-gate" },
         ]}
@@ -329,6 +338,18 @@ function Explorer() {
           the tamper-detection demo, open the{" "}
           <Link href="/ledger" className="font-bold underline">Ledger</Link> and press «Simulate Database
           Tampering». All data is synthetic demonstration data.
+        </div>
+
+        {/* Official MoSPI allocation register — all 543 Lok Sabha MPs */}
+        <div className="mt-10">
+          <SectionTitle
+            eyebrow="Official data"
+            title="MP allocation register — official MoSPI table"
+            subtitle="“Allocated Limit for Hon'ble MPs” — the published allocation limit for every Lok Sabha constituency."
+          />
+          <div className="mt-4">
+            <AllocationTable allocations={state.analytics.mpAllocations.mps} highlightNames={mps} />
+          </div>
         </div>
       </div>
     </div>

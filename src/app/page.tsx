@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useApp } from "@/store/AppStore";
 import type { Role } from "@/lib/types";
 import { STATE_NAME } from "@/lib/data";
-import { Card } from "@/components/ui";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Hero } from "@/components/hero/Hero";
@@ -68,11 +67,14 @@ export default function LandingPage() {
   const router = useRouter();
   const { state, api } = useApp();
 
-  const openGates = state.cases.filter((c) => c.gate.fired).length;
   const flagged = state.cases.filter(
     (c) => c.gate.fired || c.compositeScore >= 70 || c.moduleBreakdown.some((m) => m.triggered)
   ).length;
   const flagRate = state.cases.length ? Math.round((flagged / state.cases.length) * 100) : 0;
+
+  // Official MoSPI allocation table — all 543 Lok Sabha MPs.
+  const allocations = state.analytics.mpAllocations;
+  const totalCr = allocations.totalCr.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 
   const enter = (r: Role) => {
     api.setRole(r);
@@ -90,8 +92,8 @@ export default function LandingPage() {
           {/* Top public impact metrics */}
           <StatStrip
             items={[
-              { label: "Total MPs Covered", value: "543", detail: "Lok Sabha constituencies", icon: <span aria-hidden>🏛️</span> },
-              { label: "Total Funds Sanctioned", value: "₹8,341+ Cr", detail: "across all monitored works", accent: "text-teal-700" },
+              { label: "Total MPs Covered", value: allocations.mpCount, detail: "official MoSPI allocation table", icon: <span aria-hidden>🏛️</span> },
+              { label: "Total Funds Sanctioned", value: `₹${totalCr} Cr`, detail: "allocated limits, all Lok Sabha MPs", accent: "text-teal-700" },
               { label: "Active Works Monitored", value: state.cases.length, detail: `${STATE_NAME} · FY 2025–26 demo slice` },
               {
                 label: "Real-Time Anomaly Flag Rate",

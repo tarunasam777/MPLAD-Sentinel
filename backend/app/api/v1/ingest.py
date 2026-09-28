@@ -3,9 +3,11 @@
 ``POST /api/v1/ingest/sync`` pulls works via ``EsakshiScraperClient`` and
 feeds the raw records through the standard ``ingest_and_evaluate_batch``
 pipeline — rule gates, ML inference, quarantine queue, ledger writes —
-exactly like any other intake source. When the live portal is unreachable
-the scraper yields its standardized fallback batch; the response reports
-per-district provenance honestly instead of claiming liveness.
+exactly like any other intake source. The scraper tries the portal's
+pre-login REST API first; when unreachable it yields rows from the vendored
+REAL exports (never synthetic data), and the response reports the degraded
+provenance honestly. Real records (``record_kind: "real"``) stay out of
+flagged states per the data policy.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_actor
 from app.core.db import get_db
+from app.api.v1.works import invalidate_summary_cache
 from app.ingestion.esakshi_scraper import EsakshiScraperClient
 from app.ingestion.pipeline import ingest_and_evaluate_batch
 
@@ -55,14 +58,15 @@ async def sync_esakshi_feed(
         )
 
     result = ingest_and_evaluate_batch(db, raw_records, source="esakshi-sync")
+    invalidate_summary_cache()
     portal_live = any(d["portal_live"] for d in per_district)
     return {
         **result,
         "districts": per_district,
         "portal_live": portal_live,
         "provenance": (
-            "Parsed from the live eSAKSHI portal HTML."
+            "Rows parsed from the live eSAKSHI portal."
             if portal_live
-            else "Live portal unreachable — ingested the scraper's standardized fallback batch."
+            else "Live portal unreachable — using vendored-export fallback (real portal records, snapshot 2026-09-21)."
         ),
     }

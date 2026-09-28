@@ -20,6 +20,11 @@
   --color-paper: #f8fafc;
   --color-gold: #b45309;
   --color-gate: #b42318;
+  /* WCAG AA: Tailwind's default slate-400 (#94a3b8) is ~2.8:1 on white —
+     failing for the 10–11px metadata it's used on across dashboards.
+     Darkened to the slate-500 value (4.76:1 on white) so every
+     text-slate-400 usage passes without touching 16 call sites. */
+  --color-slate-400: #64748b;
   --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
 }

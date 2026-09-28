@@ -106,9 +106,6 @@ export function Footer() {
           {open && (
             <p className="mt-2 border-l-2 border-gov-gold pl-3 text-[11px] leading-relaxed text-navy-200">{disclaimer}</p>
           )}
-          <p className="mt-2 text-center text-[10px] text-navy-400">
-            {disclaimer}
-          </p>
           <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[10px]">
             <span className="text-navy-300">Last updated: 01 Sep 2026</span>
             <span aria-hidden className="text-navy-500">·</span>
@@ -120,7 +117,7 @@ export function Footer() {
             <span aria-hidden className="text-navy-500">·</span>
             <Link href="/contact" className="underline-offset-2 hover:text-white hover:underline">Contact</Link>
           </div>
-          <p className="mt-2 text-center text-[10px] text-navy-400">
+          <p className="mt-2 text-center text-[10px] text-navy-200">
             © 2025–26 Ministry of Statistics & Programme Implementation. All data shown is synthetic for demonstration; no real schemes, officials or records are represented.
           </p>
         </div>

@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AppProvider } from "@/store/AppStore";
+import { LocaleProvider } from "@/lib/i18n";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -14,10 +15,21 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/** Absolute base URL for canonical/metadata resolution. Falls back to
+ *  localhost for local dev; set NEXT_PUBLIC_SITE_URL in production. */
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "MPLADS Sentinel — AI-assisted monitoring demo",
   description:
     "Interactive demo: anomaly detection, critical-risk gates, immutable ledger and override audit for MPLADS. Synthetic data only.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#0f172a",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -31,7 +43,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         >
           Skip to main content
         </a>
-        <AppProvider>{children}</AppProvider>
+        <AppProvider>
+          <LocaleProvider>{children}</LocaleProvider>
+        </AppProvider>
       </body>
     </html>
   );

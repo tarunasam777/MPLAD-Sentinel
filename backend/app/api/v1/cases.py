@@ -25,11 +25,29 @@ def list_cases(
     district: str | None = None,
     mp: str | None = None,
     status: str | None = None,
+    ids: str | None = None,
     db: Session = Depends(get_db),
 ):
-    from app.api.serializers import serialized_case_list
+    """List demo cases (real WS/* register rows excluded — they live on /works).
 
-    return {"cases": serialized_case_list(db, district=district, mp=mp, status=status)}
+    ``ids`` accepts a comma-separated list to fetch specific cases, e.g. the
+    handful the frontend just ingested via sync — the store used to pull all
+    52k serialized cases to merge a dozen rows.
+    """
+    from app.api.serializers import serialize_case
+    from app.db.models import Case
+
+    q = db.query(Case).filter(~Case.id.like("WS/%"))
+    if ids:
+        wanted = [i.strip() for i in ids.split(",") if i.strip()][:200]
+        q = q.filter(Case.id.in_(wanted))
+    if district:
+        q = q.filter(Case.district == district)
+    if mp:
+        q = q.filter(Case.mp_name == mp)
+    if status:
+        q = q.filter(Case.status == status)
+    return {"cases": [serialize_case(c) for c in q.order_by(Case.id.asc()).all()]}
 
 
 @router.get("/{case_id}")
@@ -81,6 +99,12 @@ def patch_case(
     case = db.query(Case).filter_by(id=case_id).first()
     if case is None:
         raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found")
+    facts = case.facts if isinstance(case.facts, dict) else {}
+    if facts.get("record_kind") == "real":
+        raise HTTPException(
+            status_code=409,
+            detail="Data policy: real portal records are read-only in the demo workflow — descriptions cannot be edited.",
+        )
     case.title = title
     db.flush()
     run_case_pipeline(db, case)

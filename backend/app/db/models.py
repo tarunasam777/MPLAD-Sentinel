@@ -20,11 +20,14 @@ from app.core.db import Base
 class Case(Base):
     __tablename__ = "cases"
 
-    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    # 48 chars: real eSAKSHI work ids ("WS/MP138/2025-2026/205446") and their
+    # sync-normalized forms ("MPL-WS/…") run 25–29 chars — String(24) held on
+    # SQLite but would truncate/reject on Postgres.
+    id: Mapped[str] = mapped_column(String(48), primary_key=True)
     title: Mapped[str] = mapped_column(Text)
     hindi_title: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(64))
-    state: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(64), index=True)
     district: Mapped[str] = mapped_column(String(64), index=True)
     constituency: Mapped[str] = mapped_column(String(64))
     mp_name: Mapped[str] = mapped_column(String(80))
@@ -86,7 +89,7 @@ class LedgerEntry(Base):
     actor_role: Mapped[str] = mapped_column(String(120))
     body: Mapped[str] = mapped_column(Text)
     timestamp: Mapped[str] = mapped_column(String(32))
-    case_id: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    case_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
     prev_hash: Mapped[str] = mapped_column(String(64))
     hash: Mapped[str] = mapped_column(String(64), index=True)
 
@@ -95,7 +98,7 @@ class OverrideRecord(Base):
     __tablename__ = "overrides"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    case_id: Mapped[str] = mapped_column(String(24), index=True)
+    case_id: Mapped[str] = mapped_column(String(48), index=True)
     kind: Mapped[str] = mapped_column(String(16))  # "gate" | "threshold"
     official_name: Mapped[str] = mapped_column(String(80))
     official_district: Mapped[str] = mapped_column(String(64))
@@ -175,6 +178,22 @@ class MpStat(Base):
     breakdown: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class MpAllocation(Base):
+    """Official MoSPI allocation limit per Hon'ble MP, loaded verbatim from
+    the vendored “Allocated Limit for Hon'ble MPs” table (all Lok Sabha
+    MPs). ``allocated_cr`` is None where the portal row publishes no
+    amount — displayed as pending revision, never coerced to zero."""
+
+    __tablename__ = "mp_allocations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mp_name: Mapped[str] = mapped_column(String(120), unique=True)
+    state: Mapped[str] = mapped_column(String(64), index=True)
+    constituency: Mapped[str] = mapped_column(String(96))
+    allocated_cr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(32), default="mospi-csv")
+
+
 class QuarantineQueue(Base):
     __tablename__ = "quarantine_queue"
 
@@ -199,5 +218,6 @@ __all__ = [
     "StateStat",
     "CategoryStat",
     "MpStat",
+    "MpAllocation",
     "QuarantineQueue",
 ]

@@ -64,7 +64,17 @@ def baseline_for(db, case: Case) -> tuple[CostBaseline | None, str, str]:
         if row is None:
             continue
         district_c, category_c, terrain_c = cell
-        if history_cell_count(district_c or row.district, category_c or row.category, terrain_c) < MIN_HISTORY_ROWS:
+        # Pass the session so the guard counts BOTH backing layers: the
+        # real eSAKSHI training frame AND this seeded baseline register's
+        # n_records. Demonstration districts have no real rows but a fully
+        # seeded register — without ``db`` they would wrongly thin out to
+        # the manual tier.
+        if (
+            history_cell_count(
+                district_c or row.district, category_c or row.category, terrain_c, db=db
+            )
+            < MIN_HISTORY_ROWS
+        ):
             continue
         return row, source, note
     return None, "manual", "No cost baseline available in the district or state cohort — referred for manual cost estimation."
@@ -72,7 +82,7 @@ def baseline_for(db, case: Case) -> tuple[CostBaseline | None, str, str]:
 
 def evaluate(ctx: ModuleContext) -> ModuleResult:
     """M3 cost & time variance — residual of the sanctioned amount against
-    a trained gradient-boosting cost regressor (``cost-gbr-v1``), with exact
+    a trained XGBoost cost regressor (``cost-xgb-v1``), with exact
     SHAP attributions per case. The peer band shown alongside comes from
     the cascading baseline tiers above."""
     case = ctx.case

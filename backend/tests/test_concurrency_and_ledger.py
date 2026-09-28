@@ -117,3 +117,77 @@ def test_scoped_lock_concurrency(test_db):
     # Verify final case state is intact
     updated_case = test_db.query(Case).filter_by(id=target_case_id).one()
     assert updated_case.status in {"hold_active", "released", "escalated"}
+
+
+def test_manual_field_edit_detected_as_tampering(test_db):
+    """Manual inline amount/status edits must be indistinguishable, detection-
+    wise, from the simulate-tamper path: stored body rewritten directly, ONLY
+    that block's own hash re-signed (no child prevHash touched), and the next
+    chain.verify() flags the child block naturally."""
+    chain.reset(test_db)
+
+    for i in range(5):
+        chain.append(
+            test_db,
+            action=f"STAGE_{i}_ACTION",
+            category="release" if i % 2 == 0 else "clear",
+            actor=f"actor_{i}",
+            actor_role=f"Role {i}",
+            body=f"Released funds for milestone of work {i}",
+            timestamp=f"2025-06-0{i+1}T10:00:00",
+            case_id=f"MPL-2025-100{i}",
+            commit=True,
+        )
+
+    assert all(chain.verify(test_db)), "precondition: clean chain"
+
+    # Snapshot every block to prove the edit touches exactly one hash field.
+    before = {r.index: (r.body, r.hash, r.prev_hash) for r in test_db.query(LedgerEntry).all()}
+
+    # Same primitive calls the /ledger/tamper-fields endpoint makes.
+    from app.ledger.ledger_edits import (
+        edited_indices,
+        encode_body,
+        record_edit,
+        restore_edited,
+        split_body,
+    )
+
+    index = 2
+    row = test_db.query(LedgerEntry).filter_by(index=index).one()
+    head, _, _ = split_body(row.body)
+    record_edit(test_db, index, row.body, row.timestamp, row.hash)
+    chain.tamper(test_db, index, encode_body(head, 99.5, "FALSIFIED"), row.timestamp)
+
+    # Attacker model: own hash re-sealed, prevHash pointers of every OTHER
+    # block untouched, original snapshot recorded.
+    after = {r.index: (r.body, r.hash, r.prev_hash) for r in test_db.query(LedgerEntry).all()}
+    assert after[index][1] != before[index][1], "edited block's hash must change (re-sealed)"
+    for i in before:
+        if i != index:
+            assert after[i][2] == before[i][2], f"block {i} prevHash must be untouched"
+            assert after[i][1] == before[i][1], f"block {i} hash must be untouched"
+    assert edited_indices(test_db) == [index]
+
+    # Detection: child block no longer links — surfaced by the SAME verify()
+    # used by the simulate-tampering flow.
+    validity = chain.verify(test_db)
+    assert validity[index] is True, "attacker re-sealed own hash — block itself checks out"
+    assert validity[index + 1] is False, "child must fail: recomputed parent hash != stored prevHash"
+
+    # Restore Integrity / Re-seal reverts BOTH paths: original values back,
+    # chain verifies clean again.
+    restored = chain.untamper(test_db) + restore_edited(test_db)
+    assert restored >= 1
+    final = {r.index: (r.body, r.hash, r.prev_hash) for r in test_db.query(LedgerEntry).all()}
+    assert final[index] == before[index], "restore must return the original record"
+    assert all(chain.verify(test_db)), "chain must verify clean after restore"
+
+    # Round-trip safety: re-editing the restored block re-snapshots cleanly.
+    row = test_db.query(LedgerEntry).filter_by(index=index).one()
+    head, _, _ = split_body(row.body)
+    record_edit(test_db, index, row.body, row.timestamp, row.hash)
+    chain.tamper(test_db, index, encode_body(head, 0.5, "X"), row.timestamp)
+    chain.untamper(test_db)
+    restore_edited(test_db)
+    assert all(chain.verify(test_db))

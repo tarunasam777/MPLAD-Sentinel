@@ -10,6 +10,8 @@ from PIL import ExifTags, Image, UnidentifiedImageError
 
 import imagehash
 
+from app.core.config import MAX_IMAGE_PIXELS, MAX_UPLOAD_BYTES
+
 router = APIRouter(prefix="/verify-photos", tags=["photo-verify"])
 
 HASH_BITS = 64
@@ -20,14 +22,40 @@ EARTH_RADIUS_M = 6_371_000.0
 EXIF_DATETIME = 306
 EXIF_DATETIME_ORIGINAL = 36867
 
+# Guard against decompression-bomb images (a 10x10 pixel PNG that expands to
+# gigabytes on decode). Pillow raises DecompressionBombError past the cap.
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
+
+async def _read_limited(upload: UploadFile, field: str) -> bytes:
+    """Read an upload capped at MAX_UPLOAD_BYTES so a malicious or runaway
+    client cannot force unbounded memory allocation on the read."""
+    content = await upload.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{field} exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit.",
+        )
+    if not content:
+        raise HTTPException(status_code=400, detail=f"{field} must be a non-empty image file.")
+    return content
+
 
 def _load_image(data: bytes) -> Image.Image:
     try:
         img = Image.open(io.BytesIO(data))
-        img.load()
-        return img
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not decode uploaded image: {exc}") from exc
+    try:
+        img.load()
+    except Image.DecompressionBombError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image is too large to decode ({MAX_IMAGE_PIXELS:,} pixel limit).",
+        ) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Could not decode uploaded image: {exc}") from exc
+    return img
 
 
 def _dms_to_decimal(values: object, ref: object) -> float | None:
@@ -111,12 +139,8 @@ async def verify_photos(
     Uses perceptual hashing (pHash) for visual similarity and EXIF metadata
     (GPS + capture timestamp) for geospatial corroboration.
     """
-    a_bytes = await image_a.read()
-    b_bytes = await image_b.read()
-    if not a_bytes:
-        raise HTTPException(status_code=400, detail="image_a must be a non-empty image file.")
-    if not b_bytes:
-        raise HTTPException(status_code=400, detail="image_b must be a non-empty image file.")
+    a_bytes = await _read_limited(image_a, "image_a")
+    b_bytes = await _read_limited(image_b, "image_b")
 
     img_a = _load_image(a_bytes)
     img_b = _load_image(b_bytes)

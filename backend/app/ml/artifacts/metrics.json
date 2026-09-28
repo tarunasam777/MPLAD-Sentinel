@@ -1,33 +1,43 @@
 {
   "stall": {
     "model": "LogisticRegression",
-    "version": "stall-lr-v1",
-    "n_train": 1600,
-    "n_test": 400,
-    "accuracy": 0.8725,
-    "roc_auc": 0.8669,
+    "version": "stall-lr-v2",
+    "n_train": 29370,
+    "n_test": 7343,
+    "accuracy": 0.796,
+    "roc_auc": 0.7997,
     "features": [
       "months_since_sanction",
       "extensions",
-      "disbursal_velocity",
       "completion_pct",
       "category_code",
       "district_stall_rate"
-    ]
+    ],
+    "dataset": {
+      "source": "eSAKSHI work-level exports (portal snapshot 2026-09-21)",
+      "n_works": 81727,
+      "stall_definition": "one-year norm violation: sanctioned work not completed and aged past the 12-month window, OR completed only after more than 12 months (ground truth from the eSAKSHI completion register; no synthetic rule)",
+      "n_positive": 9678
+    }
   },
   "cost": {
-    "model": "GradientBoostingRegressor",
-    "version": "cost-gbr-v1",
-    "n_train": 3360,
-    "n_test": 840,
-    "mae_lakh": 4.11,
-    "r2_log": 0.3391,
+    "model": "XGBRegressor",
+    "version": "cost-xgb-v1",
+    "n_train": 65381,
+    "n_test": 16346,
+    "mae_lakh": 3.211,
+    "r2_log": 0.2706,
     "features": [
       "district_code",
       "category_code",
       "terrain_code",
       "year"
     ],
-    "target": "log(sanctioned_lakh)"
+    "target": "log(sanctioned_lakh)",
+    "dataset": {
+      "source": "eSAKSHI work-level exports (portal snapshot 2026-09-21)",
+      "n_works": 81727,
+      "terrain_note": "terrain not published by the portal; constant 'plain' for real rows"
+    }
   }
 }

@@ -18,6 +18,7 @@ export default function MinistryDashboardPage() {
   const { state } = useApp();
   const categoryExpenditure = state.analytics.categoryExpenditure;
   const nationalHeatmap = state.analytics.nationalHeatmap;
+  const allocations = state.analytics.mpAllocations;
 
   const escalated = state.cases.filter((c) => c.status === "escalated" || scoreBand(c.compositeScore) === "high");
   const openGatesAll = state.cases.filter((c) => c.gate.fired && c.status === "hold_active").length;
@@ -37,14 +38,15 @@ export default function MinistryDashboardPage() {
         <h1 className="mt-1 text-2xl font-extrabold text-navy-950">National picture</h1>
         <p className="mt-1 max-w-2xl text-sm text-slate-600">
           Footprint of the scheme across states and categories, with the escalated cases that climbed to
-          this desk. Heatmap states are illustrative labels — only the demo queue links to live case pages.
+          this desk. Seed the national scale sample below to spread evaluated works across the official
+          543-constituency allocation table — the heatmap then reflects real per-state evaluation output.
         </p>
       </div>
 
       <StatStrip
         items={[
           { label: "National utilisation", value: "59%", detail: "of ₹1,850 Cr sanctioned", accent: "text-teal-700", icon: <span aria-hidden>🇮🇳</span> },
-          { label: "States captured", value: nationalHeatmap.length, detail: "heatmap states (stylised)" },
+          { label: "States/UTs covered", value: nationalHeatmap.length, detail: `${allocations.mpCount} official MP allocations tracked` },
           { label: "Open gates (all states)", value: openGatesAll, detail: "hard-rule holds", accent: "text-gate" },
           { label: "Escalated this week", value: escalated.length, detail: "climbed to ministry feed" },
         ]}
@@ -177,9 +179,11 @@ function ScaleSeedPanel() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div>
-        <div className="text-xs font-bold text-navy-950">National scale sample — 750 synthetic works, 5 states</div>
+        <div className="text-xs font-bold text-navy-950">National scale sample — works across all 543 real constituencies</div>
         <div className="text-[11px] text-slate-500">
-          Obviously-synthetic <span className="font-mono">MPL-SC-*</span> rows scored by the real pipeline.
+          Obviously-synthetic <span className="font-mono">MPL-SC-*</span> works attributed to the official
+          allocation table (real states, constituencies, MPs, allocation limits); amounts drawn as a fraction of
+          each constituency&apos;s published allocation.
           {state.mode === "mock" ? " Visible on the heatmap in Live mode." : " Heatmap and metrics above update after seeding."}
         </div>
       </div>

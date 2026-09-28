@@ -16,7 +16,26 @@ export const API_BASE =
 export const DEFAULT_DEMO_TOKEN =
   process.env.NEXT_PUBLIC_DEMO_AUTH_TOKEN ?? "sentinel-demo-2026";
 
+/** Abort any single fetch after this many ms — a hung backend must never
+ *  freeze a page (the browser default is minutes). */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 let demoToken: string | null = DEFAULT_DEMO_TOKEN;
+
+/** Coalesces concurrent GETs of the same URL into one fetch: hydration
+ *  mounts several surfaces that each fetch bootstrap/metrics/summary at the
+ *  same moment, and N parallel identical requests is pure waste. Failed or
+ *  aborted requests remove themselves so a retry always re-fetches. */
+const IN_FLIGHT = new Map<string, Promise<unknown>>();
+
+function getRequest<T>(path: string): Promise<T> {
+  const key = `GET ${path}`;
+  const existing = IN_FLIGHT.get(key);
+  if (existing) return existing as Promise<T>;
+  const promise = request<T>(path).finally(() => IN_FLIGHT.delete(key));
+  IN_FLIGHT.set(key, promise);
+  return promise;
+}
 
 export function setDemoToken(token: string | null) {
   demoToken = token && token.trim() ? token.trim() : null;
@@ -60,22 +79,96 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         : (init.headers as Record<string, string>);
     Object.assign(headers, extra);
   }
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      if (body?.detail) detail = String(body.detail);
-    } catch {
-      /* non-JSON error body */
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const signal = init?.signal ?? controller.signal;
+  try {
+    const res = await fetch(`${API_BASE}${path}`, { ...init, headers, signal });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const body = await res.json();
+        if (body?.detail) detail = String(body.detail);
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new Error(detail);
     }
-    throw new Error(detail);
+    return res.json() as Promise<T>;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json() as Promise<T>;
 }
 
 export async function fetchBootstrap(): Promise<BootstrapData> {
-  return request<BootstrapData>("/api/v1/bootstrap");
+  return getRequest<BootstrapData>("/api/v1/bootstrap");
+}
+
+/* ── Universal search ─────────────────────────────────────────────── */
+
+export interface SearchHit {
+  id?: string;
+  title?: string;
+  name?: string;
+  actor?: string;
+  mpName?: string;
+  district?: string;
+  state?: string;
+  category?: string;
+  status?: string;
+  role?: string;
+  action?: string;
+  body?: string;
+  index?: number;
+  sanctionedLakh?: number;
+  riskScore?: number;
+  usedCr?: number;
+  href: string;
+}
+
+export interface SearchGroup {
+  key: "works" | "cases" | "mps" | "officials" | "ledger" | "states";
+  label: string;
+  total: number;
+  results: SearchHit[];
+}
+
+export interface SearchResponse {
+  query: string;
+  groups: SearchGroup[];
+}
+
+/** One search across the whole program: real works register, demo cases,
+ *  MPs, officials, sealed ledger blocks and states — each hit carries a
+ *  deep-link href so no result is ever a dead end. */
+export async function fetchUniversalSearch(q: string, limit = 6): Promise<SearchResponse> {
+  return getRequest<SearchResponse>(
+    `/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`
+  );
+}
+
+export interface MlMetrics {
+  stall: { version: string; model: string; n_train: number; n_test: number; accuracy: number; roc_auc: number; features: string[] };
+  cost: { version: string; model: string; n_train: number; n_test: number; mae_lakh: number; r2_log: number; features: string[]; target: string };
+  fusionWeights: Record<string, number>;
+  modelVersions: Record<string, string>;
+}
+
+/** Fetch trained-model metrics (single source of truth for the methodology page). */
+export async function fetchMlMetrics(): Promise<MlMetrics> {
+  return getRequest<MlMetrics>("/api/v1/ml/metrics");
+}
+
+export interface MpAllocationsPayload {
+  source: string;
+  mpCount: number;
+  totalCr: number;
+  mps: { mpName: string; state: string; constituency: string; allocatedCr: number | null }[];
+}
+
+/** Official MoSPI MP allocation table (all Lok Sabha MPs). */
+export async function fetchMpAllocations(): Promise<MpAllocationsPayload> {
+  return getRequest<MpAllocationsPayload>("/api/v1/mps/allocations");
 }
 
 export async function postDecide(
@@ -102,6 +195,9 @@ export interface IngestSyncResult {
   quarantined: number;
   held: number;
   evaluating: number;
+  /** Real rows already on record that were skipped without re-evaluation
+   *  (absent on older backends — never assume > 0). */
+  skipped?: number;
   cases: string[];
   portal_live: boolean;
   provenance: string;
@@ -115,8 +211,79 @@ export async function postIngestSync(districts?: string[]): Promise<IngestSyncRe
   });
 }
 
-export async function fetchCases(): Promise<{ cases: WorkCase[] }> {
-  return request<{ cases: WorkCase[] }>("/api/v1/cases");
+export async function fetchCases(ids?: string[]): Promise<{ cases: WorkCase[] }> {
+  // Id-filtered: the backend excludes the real WS/* register from this
+  // endpoint, and fetching every serialized demo case just to merge a dozen
+  // sync rows is wasted bandwidth. Cap at 200 ids (server-side too).
+  const path = ids?.length ? `/api/v1/cases?ids=${encodeURIComponent(ids.slice(0, 200).join(","))}` : "/api/v1/cases";
+  return getRequest<{ cases: WorkCase[] }>(path);
+}
+
+/* ------------------------------------------------------------------ */
+/* Real works register (eSAKSHI work-level exports, seeded server-side) */
+/* ------------------------------------------------------------------ */
+
+export interface WorkRow {
+  id: string;
+  title: string;
+  state: string;
+  district: string;
+  constituency: string;
+  mpName: string;
+  category: string;
+  sanctionedLakh: number;
+  sanctionedDate: string;
+  releasedPct: number;
+  completionPct: number;
+  monthsSinceSanction: number;
+  statusLabel: string;
+  riskScore: number;
+  kind: string;
+}
+
+export interface WorksPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
+  works: WorkRow[];
+}
+
+export interface WorksSummaryState {
+  state: string;
+  works: number;
+  sanctionedCr: number;
+  avgCompletionPct: number;
+  highRisk: number;
+}
+
+export interface WorksSummary {
+  totalWorks: number;
+  totalSanctionedCr: number;
+  noPaymentYet: number;
+  source: string;
+  states: WorksSummaryState[];
+}
+
+export interface WorksQuery {
+  state?: string;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function fetchWorks(params: WorksQuery = {}): Promise<WorksPage> {
+  const usp = new URLSearchParams();
+  if (params.state) usp.set("state", params.state);
+  if (params.q?.trim()) usp.set("q", params.q.trim());
+  if (params.page) usp.set("page", String(params.page));
+  if (params.pageSize) usp.set("page_size", String(params.pageSize));
+  const qs = usp.toString();
+  return getRequest<WorksPage>(`/api/v1/works${qs ? `?${qs}` : ""}`);
+}
+
+export async function fetchWorksSummary(): Promise<WorksSummary> {
+  return getRequest<WorksSummary>("/api/v1/works/summary");
 }
 
 export interface ScaleSeedResult {
@@ -158,11 +325,30 @@ export async function postUntamper(): Promise<{ restored: number }> {
 export async function verifyChainLive(): Promise<{
   validity: boolean[];
   tampered: number[];
+  editedBlocks?: number[];
   ok: boolean;
 }> {
-  return request<{ validity: boolean[]; tampered: number[]; ok: boolean }>(
-    "/api/v1/ledger/verify"
-  );
+  return request<{
+    validity: boolean[];
+    tampered: number[];
+    editedBlocks?: number[];
+    ok: boolean;
+  }>("/api/v1/ledger/verify");
+}
+
+/** Manual inline edit of a sealed block (amount/status) — the "attacker with
+ *  DB access" path. The backend stores the row directly and re-signs ONLY
+ *  that block's hash; the chain break surfaces on the next /verify, exactly
+ *  like the Simulate Database Tampering button. */
+export async function postTamperFields(
+  index: number,
+  amount: number,
+  status: string
+): Promise<{ block: LedgerEntry }> {
+  return request<{ block: LedgerEntry }>(`/api/v1/ledger/tamper-fields`, {
+    method: "POST",
+    body: JSON.stringify({ index, amount, status }),
+  });
 }
 
 export async function postResetDemo(): Promise<{ ok: boolean }> {

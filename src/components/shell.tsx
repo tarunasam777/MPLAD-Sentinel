@@ -9,7 +9,7 @@ export function Shell({
   active,
   children,
 }: {
-  active: "home" | "ledger" | "override" | "case" | "public";
+  active: "home" | "ledger" | "override" | "case" | "public" | "works" | "search";
   children?: React.ReactNode;
 }) {
   return (

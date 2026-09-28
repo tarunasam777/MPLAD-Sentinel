@@ -65,7 +65,8 @@ export type LedgerCategory =
   | "release"
   | "reject"
   | "audit"
-  | "system";
+  | "system"
+  | "ingestion";
 
 export type OverrideKind = "gate" | "threshold";
 
@@ -210,4 +211,13 @@ export interface AnalyticsData {
     usedCr: number;
     breakdown: { category: string; lakh: number }[];
   }[];
+  mpAllocations: MpAllocationData;
+}
+
+/** Official MoSPI “Allocated Limit for Hon'ble MPs” table. */
+export interface MpAllocationData {
+  source: string;
+  mpCount: number;
+  totalCr: number;
+  mps: { mpName: string; state: string; constituency: string; allocatedCr: number | null }[];
 }
